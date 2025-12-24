@@ -5,4 +5,5 @@ RUN apk add --no-cache python3-dev py3-pip
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
-CMD ["python", "app.py"]
+ENTRYPOINT [ "python3" ]
+CMD ["app.py"]

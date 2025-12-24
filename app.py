@@ -7,15 +7,16 @@ import logging
 from adguardhome import AdGuardHome, AdGuardHomeError
 import eero
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
 EERO_COOKIE_FILE = 'session.cookie'
 ADGUARD_IP = os.getenv('ADGUARD_IP')
 ADGUARD_PORT = os.getenv('ADGUARD_PORT', 80)
 ADGUARD_LOGIN = os.getenv('ADGUARD_LOGIN', 'admin')
 ADGUARD_PASSWORD = os.getenv('ADGUARD_PASSWORD')
 SLEEP_TIME = int(os.getenv('SLEEP_TIME', 3600))
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+
+logging.basicConfig(level=LOG_LEVEL, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class CookieStore(eero.SessionStorage):
     def __init__(self, cookie_file):
@@ -155,7 +156,7 @@ async def apply_client_renames(device_name):
     if client_renames:
         client_renames_dict = {old_name: new_name for old_name, new_name in [item.split('|') for item in client_renames.split(',')]}
         if device_name in client_renames_dict:
-            logger.debug(f"Renaming device {device_name} to {client_renames_dict[device_name]}")
+            logger.info(f"Renaming device {device_name} to {client_renames_dict[device_name]}")
             device_name = client_renames_dict[device_name]
 
     return device_name
@@ -181,10 +182,10 @@ async def update_adguard_clients():
         for eero_device in eero_devices:
             try:
                 device_display_name = await ensure_unique_device_name(eero_device, eero_devices)
+                device_display_name = await apply_client_renames(device_display_name)
                 if not device_display_name:
                     logger.debug(f"Skipping device with no display name: {eero_device}")
                     continue
-                device_display_name = apply_client_renames(device_display_name)
                 device_tags = await get_device_tags(eero_device, adguard_allowed_tags)
 
                 logger.info(f"Processing device: {device_display_name}/{eero_device['ipv4']}/{sorted(adguard_name_tags.get(device_display_name, []))}->{device_tags}")
