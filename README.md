@@ -1,7 +1,37 @@
 # eero-adguard-sync
 Simple script to sync eero clients to adguard
 
-This is how I use it locally
+First generate your `session.cookie` with
+
+```bash
+docker run --rm -it \
+    -v $PWD/session.cookie:/app/session.cookie \
+    github.com/natefox/eero-adguard-sync:latest \
+    login.py
+```
+
+
+This will create the session.cookie file. The session cookie looks like this:
+```
+12345678|rewfgdsgswereqwfdsadetergf
+```
+
+
+Then run with the session.cookie mapped to the /app dir. Adjust the other environment variables to match your environment.
+
+```bash
+docker run --rm -it \
+    -v $PWD/session.cookie:/app/session.cookie \
+    -e EERO_COOKIE_FILE=/app/session.cookie \
+    -e ADGUARD_IP=192.168.1.50 \
+    -e ADGUARD_PORT=80 \
+    -e ADGUARD_LOGIN=adguardlogin \
+    -e ADGUARD_PASSWORD=mypasswordhere \
+    github.com/natefox/eero-adguard-sync:latest
+```
+
+
+Here's how I run this personally with docker-compose
 ```yaml
   adguardsync:
     image: github.com/natefox/eero-adguard-sync:latest
@@ -9,12 +39,13 @@ This is how I use it locally
     volumes:
       - /opt/docker_apps/adguardsync/session.cookie:/app/session.cookie
     environment: # could also use an env file
-      - EERO_COOKIE_FILE=/app/session.cookie
+      - EERO_COOKIE_FILE=/app/session.cookie # default is /app/session.cookie
       - ADGUARD_IP=192.168.1.50
-      # - ADGUARD_PORT=80
-      - ADGUARD_LOGIN=admin
+      # - ADGUARD_PORT=80 # default is 80
+      - ADGUARD_LOGIN=adguardlogin
       - ADGUARD_PASSWORD=mypasswordhere
-      # - SLEEP_TIME=3600
-      # - CLIENT_RENAMES="old_name|new_name,old_name2|new_name2" # case sensitive
-
+      # - SLEEP_TIME=3600 ## how long to sleep between syncs (seconds)
+      ## this will rename things from Eero to a new name in Adguard
+      - CLIENT_RENAMES=SomeDeviceIn-Eero|My-New-Device-Name
+      # - LOG_LEVEL=info
 ```
