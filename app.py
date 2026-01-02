@@ -104,6 +104,9 @@ async def delete_device_from_adguard(device_name):
 
 
 async def get_device_tags(device, allowed_tags=None):
+    if not device.get('display_name'):
+        logger.debug(f"Device has no display name, returning empty tags")
+        return []
     logger.debug(f"Getting tags for device: {device['display_name']}")
     ## not entirely sure how I want to handle this going forward
     ## for now we'll look at mac address or name and kinda hardcode things?
