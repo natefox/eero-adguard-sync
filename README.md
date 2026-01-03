@@ -47,5 +47,11 @@ Here's how I run this personally with docker-compose
       # - SLEEP_TIME=3600 ## how long to sleep between syncs (seconds)
       ## this will rename things from Eero to a new name in Adguard
       - CLIENT_RENAMES=SomeDeviceIn-Eero|My-New-Device-Name
+      # inlcude only these networks (semicolon delimited) if you have multiple eero networks
+      - EERO_NETWORK_NAMES=Mynetwork
       # - LOG_LEVEL=info
 ```
+
+TODO:
+[] Figure out how I want to handle conflicts. Notably when you have a device named XX123 and then a second XX123 comes online (smart plugs are a good example here). Need to rename the first one to work with the uniquiness. Maybe just override names any time theres an IP conflict?
+[] Should be deleting when IP address is None but doesnt seem to be doing that. Will investigate.

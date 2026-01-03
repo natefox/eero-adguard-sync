@@ -45,7 +45,13 @@ def get_eero_devices():
     session = CookieStore(EERO_COOKIE_FILE)
     eero_client = eero.Eero(session)
     account = eero_client.account()
+    # logger.debug(f"Eero account info: {json.dumps(account, indent=4)}")
     for network in account['networks']['data']:
+        if os.environ.get('EERO_NETWORK_NAMES'):
+            allowed_names = [name.strip() for name in os.environ['EERO_NETWORK_NAMES'].split(',')]
+            if network['name'] not in allowed_names:
+                logger.debug(f"Skipping network {network['name']} due to EERO_NETWORK_NAMES filter")
+                continue
         devices = eero_client.devices(network['url'])
 
     logger.debug(f"Eero devices: {json.dumps(devices, indent=4)}")
@@ -57,8 +63,11 @@ async def ensure_unique_device_name(device, eero_devices):
     # if not, append the last 3 blocks of the mac address to the device_name to make it unique
     # such as "MyDevice (12:34:56)"
     # first see if the device's display_name is unique
-    device_name = device['display_name']
-    devices_with_device_name = [d for d in eero_devices if d['display_name'] == device_name]
+    device_name = device.get('display_name')
+    if not device_name:
+        logger.debug(f"Device has no display name, returning None")
+        return None
+    devices_with_device_name = [d for d in eero_devices if d.get('display_name') == device_name]
     if len(devices_with_device_name) > 1:
         device_name = f"{device_name} ({device['mac'][-8:]})"
         logger.debug(f"Device name not unique, appending MAC: {device_name}")
