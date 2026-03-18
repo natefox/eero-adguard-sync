@@ -9,7 +9,7 @@ import eero
 
 EERO_COOKIE_FILE = 'session.cookie'
 ADGUARD_IP = os.getenv('ADGUARD_IP')
-ADGUARD_PORT = os.getenv('ADGUARD_PORT', 80)
+ADGUARD_PORT = int(os.getenv('ADGUARD_PORT', 80))
 ADGUARD_LOGIN = os.getenv('ADGUARD_LOGIN', 'admin')
 ADGUARD_PASSWORD = os.getenv('ADGUARD_PASSWORD')
 SLEEP_TIME = int(os.getenv('SLEEP_TIME', 3600))
@@ -41,11 +41,10 @@ class CookieStore(eero.SessionStorage):
 
 def get_eero_devices():
     logger.debug("Fetching Eero devices")
-    # Replace 'your_eero_access_token' with your actual Eero access token
     session = CookieStore(EERO_COOKIE_FILE)
     eero_client = eero.Eero(session)
     account = eero_client.account()
-    # logger.debug(f"Eero account info: {json.dumps(account, indent=4)}")
+    all_devices = []
     for network in account['networks']['data']:
         if os.environ.get('EERO_NETWORK_NAMES'):
             allowed_names = [name.strip() for name in os.environ['EERO_NETWORK_NAMES'].split(',')]
@@ -53,19 +52,14 @@ def get_eero_devices():
                 logger.debug(f"Skipping network {network['name']} due to EERO_NETWORK_NAMES filter")
                 continue
         devices = eero_client.devices(network['url'])
+        all_devices.extend(devices)
 
-    logger.debug(f"Eero devices: {json.dumps(devices, indent=4)}")
-    return devices
+    logger.debug(f"Eero devices: {json.dumps(all_devices, indent=4)}")
+    return all_devices
 
-async def ensure_unique_device_name(device, eero_devices):
-    logger.debug(f"Ensuring unique name for device: {device['display_name']}")
-    # look through the eero devices and ensure device's name is unique
-    # if not, append the last 3 blocks of the mac address to the device_name to make it unique
-    # such as "MyDevice (12:34:56)"
-    # first see if the device's display_name is unique
+def ensure_unique_device_name(device, eero_devices):
     device_name = device.get('display_name')
     if not device_name:
-        logger.debug(f"Device has no display name, returning None")
         return None
     devices_with_device_name = [d for d in eero_devices if d.get('display_name') == device_name]
     if len(devices_with_device_name) > 1:
@@ -73,105 +67,94 @@ async def ensure_unique_device_name(device, eero_devices):
         logger.debug(f"Device name not unique, appending MAC: {device_name}")
     return device_name
 
-async def add_device_to_adguard(device_name, device_ip, device_tags=None):
-    logger.debug(f"Adding device to AdGuard: {device_name} at {device_ip} with tags {device_tags}")
-    async with AdGuardHome(
-        host=ADGUARD_IP,
-        port=int(ADGUARD_PORT),
-        username=ADGUARD_LOGIN,
-        password=ADGUARD_PASSWORD
-    ) as adguard:
-        payload = {"ids":[device_ip],"name":device_name,"tags":[],"use_global_settings":True,"filtering_enabled":False,"safebrowsing_enabled":False,"parental_enabled":False,"ignore_querylog":False,"ignore_statistics":False,"blocked_services":[],"safe_search":{"enabled":False,"bing":True,"duckduckgo":True,"ecosia":True,"google":True,"pixabay":True,"yandex":True,"youtube":True},"upstreams":[],"upstreams_cache_enabled":False,"upstreams_cache_size":0,"use_global_blocked_services":True,"blocked_services_schedule":{"time_zone":"Local"}}
-        if device_tags:
-            payload['tags'] = device_tags
-        await adguard.request(uri="clients/add", method="POST", json_data=payload)
-
-
-async def update_device_ip(device_name, device_ip, device_tags=None):
-    logger.debug(f"Updating device IP in AdGuard: {device_name} to {device_ip} with tags {device_tags}")
-    async with AdGuardHome(
-        host=ADGUARD_IP,
-        port=ADGUARD_PORT,
-        username=ADGUARD_LOGIN,
-        password=ADGUARD_PASSWORD
-    ) as adguard:
-        payload = {"name":device_name,"data":{"ids":[device_ip],"name":device_name,"tags":[],"use_global_settings":True,"filtering_enabled":False,"safebrowsing_enabled":False,"parental_enabled":False,"ignore_querylog":False,"ignore_statistics":False,"blocked_services":[],"safe_search":{"enabled":False,"bing":True,"duckduckgo":True,"ecosia":True,"google":True,"pixabay":True,"yandex":True,"youtube":True},"upstreams":[],"upstreams_cache_enabled":False,"upstreams_cache_size":0,"use_global_blocked_services":True,"blocked_services_schedule":{"time_zone":"America/Los_Angeles"},"safesearch_enabled":False}}
-        if device_tags:
-            payload['data']['tags'] = device_tags
-        await adguard.request(uri="clients/update", method="POST", json_data=payload)
-
-
-async def delete_device_from_adguard(device_name):
-    logger.debug(f"Deleting device from AdGuard: {device_name}")
-    async with AdGuardHome(
-        host=ADGUARD_IP,
-        port=ADGUARD_PORT,
-        username=ADGUARD_LOGIN,
-        password=ADGUARD_PASSWORD
-    ) as adguard:
-        await adguard.request(uri="clients/delete", method="POST", json_data={"name": device_name})
-
-
-async def get_device_tags(device, allowed_tags=None):
+def get_device_tags(device):
     if not device.get('display_name'):
-        logger.debug(f"Device has no display name, returning empty tags")
         return []
-    logger.debug(f"Getting tags for device: {device['display_name']}")
-    ## not entirely sure how I want to handle this going forward
-    ## for now we'll look at mac address or name and kinda hardcode things?
+    name_lower = device['display_name'].lower()
     device_tags = set()
-    if 'phone' in device['display_name'].lower():
-        device_tags.add('device_phone')
-    if 'iphone' in device['display_name'].lower():
-        device_tags.add('device_phone')
-        device_tags.add('os_ios')
-    if 'android' in device['display_name'].lower():
-        device_tags.add('os_android')
-        device_tags.add('device_phone')
-    if 'kindle' in device['display_name'].lower():
-        device_tags.add('device_tablet')
-    if 'ipad' in device['display_name'].lower():
-        device_tags.add('device_tablet')
-    if 'macbook' in device['display_name'].lower():
-        device_tags.add('os_macos')
-        device_tags.add('device_laptop')
-    if 'fire hd' in device['display_name'].lower():
-        device_tags.add('os_android')
-        device_tags.add('device_tablet')
-    if 'nintendo' in device['display_name'].lower():
-        device_tags.add('device_gameconsole')
-    if 'nvidia' in device['display_name'].lower():
-        device_tags.add('device_gameconsole')
-    if 'xbox' in device['display_name'].lower():
-        device_tags.add('device_gameconsole')
-    if 'playstation' in device['display_name'].lower():
-        device_tags.add('device_gameconsole')
-    if 'ps5' in device['display_name'].lower():
-        device_tags.add('device_gameconsole')
-    if 'sonos' in device['display_name'].lower():
-        device_tags.add('device_audio')
-    if 'bose' in device['display_name'].lower():
-        device_tags.add('device_audio')
-    if 'tcl' in device['display_name'].lower():
-        device_tags.add('device_tv')
-    if 'linux' in device['display_name'].lower():
-        device_tags.add('os_linux')
 
-    return sorted(list(device_tags))
+    TAG_RULES = [
+        ('iphone',      ['device_phone', 'os_ios']),
+        ('android',     ['device_phone', 'os_android']),
+        ('phone',       ['device_phone']),
+        ('kindle',      ['device_tablet']),
+        ('ipad',        ['device_tablet']),
+        ('fire hd',     ['device_tablet', 'os_android']),
+        ('macbook',     ['device_laptop', 'os_macos']),
+        ('nintendo',    ['device_gameconsole']),
+        ('nvidia',      ['device_gameconsole']),
+        ('xbox',        ['device_gameconsole']),
+        ('playstation', ['device_gameconsole']),
+        ('ps5',         ['device_gameconsole']),
+        ('sonos',       ['device_audio']),
+        ('bose',        ['device_audio']),
+        ('tcl',         ['device_tv']),
+        ('linux',       ['os_linux']),
+    ]
 
-async def apply_client_renames(device_name):
-    logger.debug(f"Applying client renames for device: {device_name}")
-    # create a dictionary of client renames from the env var CLIENT_RENAMES
-    # CLIENT_RENAMES looks like this: "old_name|new_name,old_name2|new_name2"
+    for keyword, tags in TAG_RULES:
+        if keyword in name_lower:
+            device_tags.update(tags)
 
+    return sorted(device_tags)
+
+def apply_client_renames(device_name):
     client_renames = os.getenv('CLIENT_RENAMES', '')
     if client_renames:
         client_renames_dict = {old_name: new_name for old_name, new_name in [item.split('|') for item in client_renames.split(',')]}
         if device_name in client_renames_dict:
             logger.info(f"Renaming device {device_name} to {client_renames_dict[device_name]}")
             device_name = client_renames_dict[device_name]
-
     return device_name
+
+
+DEFAULT_CLIENT = {
+    "tags": [],
+    "use_global_settings": True,
+    "filtering_enabled": False,
+    "safebrowsing_enabled": False,
+    "parental_enabled": False,
+    "ignore_querylog": False,
+    "ignore_statistics": False,
+    "blocked_services": [],
+    "safe_search": {
+        "enabled": False,
+        "bing": True,
+        "duckduckgo": True,
+        "ecosia": True,
+        "google": True,
+        "pixabay": True,
+        "yandex": True,
+        "youtube": True
+    },
+    "upstreams": [],
+    "upstreams_cache_enabled": False,
+    "upstreams_cache_size": 0,
+    "use_global_blocked_services": True,
+    "blocked_services_schedule": {"time_zone": "Local"},
+}
+
+
+async def add_device_to_adguard(adguard, device_name, device_ip, device_tags=None):
+    logger.debug(f"Adding device to AdGuard: {device_name} at {device_ip} with tags {device_tags}")
+    payload = {**DEFAULT_CLIENT, "ids": [device_ip], "name": device_name}
+    if device_tags:
+        payload['tags'] = device_tags
+    await adguard.request(uri="clients/add", method="POST", json_data=payload)
+
+
+async def update_device_ip(adguard, device_name, device_ip, device_tags=None):
+    logger.debug(f"Updating device IP in AdGuard: {device_name} to {device_ip} with tags {device_tags}")
+    data = {**DEFAULT_CLIENT, "ids": [device_ip], "name": device_name}
+    if device_tags:
+        data['tags'] = device_tags
+    payload = {"name": device_name, "data": data}
+    await adguard.request(uri="clients/update", method="POST", json_data=payload)
+
+
+async def delete_device_from_adguard(adguard, device_name):
+    logger.debug(f"Deleting device from AdGuard: {device_name}")
+    await adguard.request(uri="clients/delete", method="POST", json_data={"name": device_name})
 
 
 async def update_adguard_clients():
@@ -186,38 +169,53 @@ async def update_adguard_clients():
     ) as adguard:
         adguard_clients_obj = await adguard.request('clients')
         adguard_clients = adguard_clients_obj['clients']
-        adguard_allowed_tags = adguard_clients_obj['supported_tags']
         adguard_name_ips = {a['name']: a.get('ids', []) for a in adguard_clients}
         adguard_name_tags = {a['name']: a.get('tags', []) for a in adguard_clients}
+        # Build reverse map: IP -> client name for conflict resolution
+        adguard_ip_name = {}
+        for a in adguard_clients:
+            for ip in a.get('ids', []):
+                adguard_ip_name[ip] = a['name']
         logger.debug(f"Retrieved {len(adguard_clients)} AdGuard clients")
 
         for eero_device in eero_devices:
             try:
-                device_display_name = await ensure_unique_device_name(eero_device, eero_devices)
-                device_display_name = await apply_client_renames(device_display_name)
+                device_display_name = ensure_unique_device_name(eero_device, eero_devices)
+                device_display_name = apply_client_renames(device_display_name)
                 if not device_display_name:
-                    logger.debug(f"Skipping device with no display name: {eero_device}")
                     continue
-                device_tags = await get_device_tags(eero_device, adguard_allowed_tags)
+                device_ip = eero_device.get('ipv4')
+                device_tags = get_device_tags(eero_device)
 
-                logger.info(f"Processing device: {device_display_name}/{eero_device['ipv4']}/{sorted(adguard_name_tags.get(device_display_name, []))}->{device_tags}")
+                logger.info(f"Processing device: {device_display_name}/{device_ip}/{sorted(adguard_name_tags.get(device_display_name, []))}->{device_tags}")
 
-                if device_display_name in adguard_name_ips and not eero_device.get('ipv4'):
-                    logger.info(f"Deleting device {device_display_name} from AdGuard Home")
-                    await delete_device_from_adguard(device_display_name)
+                if device_display_name in adguard_name_ips and not device_ip:
+                    logger.info(f"Deleting device {device_display_name} from AdGuard Home (no IP)")
+                    await delete_device_from_adguard(adguard, device_display_name)
 
-                elif device_display_name not in adguard_name_ips and eero_device.get('ipv4'):
-                    # Add the device to AdGuard Home
-                    logger.info(f"Adding device {device_display_name}/{eero_device['ipv4']}/{device_tags}")
-                    await add_device_to_adguard(device_display_name, eero_device['ipv4'], device_tags)
+                elif device_display_name not in adguard_name_ips and device_ip:
+                    # Check if the IP is already claimed by another client
+                    existing_owner = adguard_ip_name.get(device_ip)
+                    if existing_owner and existing_owner != device_display_name:
+                        logger.info(f"IP {device_ip} is owned by '{existing_owner}', deleting old client before adding '{device_display_name}'")
+                        await delete_device_from_adguard(adguard, existing_owner)
+                        del adguard_name_ips[existing_owner]
+                        adguard_ip_name[device_ip] = device_display_name
+                    logger.info(f"Adding device {device_display_name}/{device_ip}/{device_tags}")
+                    await add_device_to_adguard(adguard, device_display_name, device_ip, device_tags)
+                    adguard_name_ips[device_display_name] = [device_ip]
 
-                elif device_display_name in adguard_name_ips and eero_device['ipv4'] not in adguard_name_ips[device_display_name]:
-                    logger.info(f"Updating device {device_display_name}/{eero_device['ipv4']}/{device_tags}")
-                    await update_device_ip(device_display_name, eero_device['ipv4'], device_tags)
+                elif device_display_name in adguard_name_ips and device_ip and device_ip not in adguard_name_ips[device_display_name]:
+                    logger.info(f"Updating device {device_display_name}/{device_ip}/{device_tags}")
+                    await update_device_ip(adguard, device_display_name, device_ip, device_tags)
+                    adguard_name_ips[device_display_name] = [device_ip]
 
-                if eero_device.get('ipv4') and sorted(adguard_name_tags.get(device_display_name, [])) != sorted(device_tags):
+                # Update tags if they changed
+                if device_ip and sorted(adguard_name_tags.get(device_display_name, [])) != device_tags:
                     logger.info(f"Updating device tags on {device_display_name}: {sorted(adguard_name_tags.get(device_display_name, []))}->{device_tags}")
-                    await update_device_ip(device_display_name, eero_device['ipv4'], device_tags)
+                    await update_device_ip(adguard, device_display_name, device_ip, device_tags)
+                    adguard_name_tags[device_display_name] = device_tags
+
             except AdGuardHomeError as e:
                 logger.error(f"Error processing device {device_display_name}: {e}")
                 continue
@@ -332,8 +330,8 @@ Eero device object:
         "display_name": "0be8ca7cd8b201a1930a4e68dfffffff",
         "model_name": null
     },
-    
-    
+
+
 Adguard entire clients object:
 {
     "clients": [
